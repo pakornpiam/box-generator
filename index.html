@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Box Generator — Heat-Set Insert Box + Lid</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="sidebar">
+  <h1>📦 Box Generator</h1>
+  <p class="subtitle">Rectangular or cylindrical box + lid (screw / hinged / snap / slide). Adjustable size. STL export for Bambu Lab.</p>
+
+  <div class="section">
+    <h2>Box Size</h2>
+    <label>Shape
+      <select id="shape">
+        <option value="rect" selected>Rectangular</option>
+        <option value="cyl">Cylindrical</option>
+      </select>
+    </label>
+    <label id="diaLabel">Outer diameter (mm) <input type="number" id="diameter" value="60" min="20" max="256" step="1"></label>
+    <label id="sizeXLabel">Outer width X (mm) <input type="number" id="sizeX" value="60" min="20" max="256" step="1"></label>
+    <label id="sizeYLabel">Outer depth Y (mm) <input type="number" id="sizeY" value="60" min="20" max="256" step="1"></label>
+    <label>Outer height (mm) <input type="number" id="height" value="30" min="8" max="256" step="1"></label>
+    <label>Wall thickness <input type="number" id="wall" value="2.4" min="1.2" max="8" step="0.1"></label>
+    <label>Floor thickness <input type="number" id="floor" value="2.0" min="1" max="8" step="0.1"></label>
+    <label id="cradiusLabel">Corner radius <input type="number" id="cradius" value="4" min="0" max="20" step="0.5"></label>
+  </div>
+
+  <div class="section" id="cutoutSection">
+    <h2>Removable Side Plates</h2>
+    <label class="check"><input type="checkbox" id="cutNorth"> North wall (back)</label>
+    <div class="plateDims" id="dimsNorth">
+      <label>Opening width <input type="number" id="widthNorth" value="20" min="4" max="200" step="1"></label>
+      <label>Opening depth <input type="number" id="depthNorth" value="10" min="2" max="200" step="1"></label>
+      <label>Plate style
+        <select id="styleNorth">
+          <option value="solid" selected>Solid</option>
+          <option value="flush">Flush plug</option>
+          <option value="vent">Air vent grid</option>
+          <option value="holes">Custom holes</option>
+        </select>
+      </label>
+      <div class="holeCfg" id="holesCfgNorth">
+        <label>Hole Ø <input type="number" id="holeDNorth" value="4" min="0.5" max="50" step="0.5"></label>
+        <label>Columns <input type="number" id="holesXNorth" value="3" min="1" max="20" step="1"></label>
+        <label>Rows <input type="number" id="holesYNorth" value="2" min="1" max="20" step="1"></label>
+        <label>Offset X <input type="number" id="offXNorth" value="0" min="-100" max="100" step="0.5"></label>
+        <label>Offset Y <input type="number" id="offYNorth" value="0" min="-100" max="100" step="0.5"></label>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="cutEast"> East wall (right)</label>
+    <div class="plateDims" id="dimsEast">
+      <label>Opening width <input type="number" id="widthEast" value="20" min="4" max="200" step="1"></label>
+      <label>Opening depth <input type="number" id="depthEast" value="10" min="2" max="200" step="1"></label>
+      <label>Plate style
+        <select id="styleEast">
+          <option value="solid" selected>Solid</option>
+          <option value="flush">Flush plug</option>
+          <option value="vent">Air vent grid</option>
+          <option value="holes">Custom holes</option>
+        </select>
+      </label>
+      <div class="holeCfg" id="holesCfgEast">
+        <label>Hole Ø <input type="number" id="holeDEast" value="4" min="0.5" max="50" step="0.5"></label>
+        <label>Columns <input type="number" id="holesXEast" value="3" min="1" max="20" step="1"></label>
+        <label>Rows <input type="number" id="holesYEast" value="2" min="1" max="20" step="1"></label>
+        <label>Offset X <input type="number" id="offXEast" value="0" min="-100" max="100" step="0.5"></label>
+        <label>Offset Y <input type="number" id="offYEast" value="0" min="-100" max="100" step="0.5"></label>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="cutSouth"> South wall (front)</label>
+    <div class="plateDims" id="dimsSouth">
+      <label>Opening width <input type="number" id="widthSouth" value="20" min="4" max="200" step="1"></label>
+      <label>Opening depth <input type="number" id="depthSouth" value="10" min="2" max="200" step="1"></label>
+      <label>Plate style
+        <select id="styleSouth">
+          <option value="solid" selected>Solid</option>
+          <option value="flush">Flush plug</option>
+          <option value="vent">Air vent grid</option>
+          <option value="holes">Custom holes</option>
+        </select>
+      </label>
+      <div class="holeCfg" id="holesCfgSouth">
+        <label>Hole Ø <input type="number" id="holeDSouth" value="4" min="0.5" max="50" step="0.5"></label>
+        <label>Columns <input type="number" id="holesXSouth" value="3" min="1" max="20" step="1"></label>
+        <label>Rows <input type="number" id="holesYSouth" value="2" min="1" max="20" step="1"></label>
+        <label>Offset X <input type="number" id="offXSouth" value="0" min="-100" max="100" step="0.5"></label>
+        <label>Offset Y <input type="number" id="offYSouth" value="0" min="-100" max="100" step="0.5"></label>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="cutWest"> West wall (left)</label>
+    <div class="plateDims" id="dimsWest">
+      <label>Opening width <input type="number" id="widthWest" value="20" min="4" max="200" step="1"></label>
+      <label>Opening depth <input type="number" id="depthWest" value="10" min="2" max="200" step="1"></label>
+      <label>Plate style
+        <select id="styleWest">
+          <option value="solid" selected>Solid</option>
+          <option value="flush">Flush plug</option>
+          <option value="vent">Air vent grid</option>
+          <option value="holes">Custom holes</option>
+        </select>
+      </label>
+      <div class="holeCfg" id="holesCfgWest">
+        <label>Hole Ø <input type="number" id="holeDWest" value="4" min="0.5" max="50" step="0.5"></label>
+        <label>Columns <input type="number" id="holesXWest" value="3" min="1" max="20" step="1"></label>
+        <label>Rows <input type="number" id="holesYWest" value="2" min="1" max="20" step="1"></label>
+        <label>Offset X <input type="number" id="offXWest" value="0" min="-100" max="100" step="0.5"></label>
+        <label>Offset Y <input type="number" id="offYWest" value="0" min="-100" max="100" step="0.5"></label>
+      </div>
+    </div>
+    <label>Plate thickness (mm) <input type="number" id="plateT" value="1.8" min="0.8" max="4" step="0.2"></label>
+    <p class="hint">Each checked wall gets its own opening sliced from the top rim; vertical rails inside hold a plate you can slide out and back in.</p>
+  </div>
+
+  <div class="section">
+    <h2>Lid</h2>
+    <label>Lid style
+      <select id="lidStyle">
+        <option value="screw" selected>Screw-on (inserts)</option>
+        <option value="hinged">Hinged</option>
+        <option value="snap">Snap lock</option>
+        <option value="slide">Slide</option>
+        <option value="thread">Threaded screw-top</option>
+      </select>
+    </label>
+    <label>Lid thickness <input type="number" id="lidT" value="5" min="2" max="12" step="0.5"></label>
+    <label id="fitClrLabel">Fit clearance / side <input type="number" id="fitClr" value="0.2" min="0.05" max="0.6" step="0.05"></label>
+    <label class="check" id="cbLabel"><input type="checkbox" id="counterbore" checked> Counterbore screw heads</label>
+  </div>
+
+  <div class="section" id="threadSection">
+    <h2>Screw-Top Thread</h2>
+    <label>Pitch (mm/turn) <input type="number" id="threadPitch" value="3.5" min="1.5" max="8" step="0.5"></label>
+    <label>Turns <input type="number" id="threadTurns" value="2.5" min="1" max="6" step="0.5"></label>
+  </div>
+
+  <div class="section" id="insertSection">
+    <h2>Threaded Insert</h2>
+    <label>Insert size
+      <select id="insert">
+        <option value="M2">M2</option>
+        <option value="M2.5">M2.5</option>
+        <option value="M3" selected>M3</option>
+        <option value="M4">M4</option>
+        <option value="M5">M5</option>
+      </select>
+    </label>
+    <details id="advanced">
+      <summary>Advanced (auto-set by insert)</summary>
+      <label>Insert hole Ø <input type="number" id="holeD" step="0.1"></label>
+      <label>Insert hole depth <input type="number" id="holeDepth" step="0.1"></label>
+      <label>Screw clearance Ø <input type="number" id="clearD" step="0.1"></label>
+      <label>Screw head Ø (counterbore) <input type="number" id="headD" step="0.1"></label>
+      <label>Boss wall around hole <input type="number" id="bossWall" value="2.4" step="0.1"></label>
+    </details>
+  </div>
+
+  <div class="section">
+    <h2>View</h2>
+    <label>Explode lid <input type="range" id="explode" min="0" max="60" value="25" step="1"></label>
+  </div>
+
+  <div id="info" class="section info"></div>
+  <div id="warnings"></div>
+
+  <div class="section buttons">
+    <button id="dlBox">⬇ Box STL</button>
+    <button id="dlLid">⬇ Lid STL</button>
+    <button id="dlPlate">⬇ Plate STL</button>
+  </div>
+  <p class="hint">Import both STLs into Bambu Studio — they're already flat on the bed and print without supports. Press inserts in with a soldering iron at ~230 °C.</p>
+</div>
+<div id="viewport"></div>
+<script type="module" src="app.js?v=6"></script>
+</body>
+</html>
