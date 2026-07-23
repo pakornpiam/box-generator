@@ -538,6 +538,8 @@ function wallBandWithCuts(p, outerPts, innerPts, innerOff, z0, z1) {
 // Cylinder wall segment (inner radius innerR, from z0 to z1), split into up to
 // three z-bands so the engraved vertical grooves appear only over [engZ0,engZ1]:
 // plain circle below, engraved outer circle across the groove band, plain above.
+// The groove's true top (g1 ≈ engZ1) is closed with a 45° support-free staircase
+// so the box prints without supports (same trick as the thread inner shoulder).
 function cylWallBands(p, innerR, z0, z1) {
   const R = p.diameter / 2;
   const inner = circlePts(0, 0, innerR);
@@ -546,9 +548,26 @@ function cylWallBands(p, innerR, z0, z1) {
   if (!p.engActive || g1 <= g0 + 0.01) {
     return [extrude(plain, [inner], z0, z1 - z0)];
   }
+  const band = (depth, za, zb) => extrude(
+    depth < 0.05 ? plain : engravedCircle(R, p.engGrooves.map(g => ({ ...g, depth }))),
+    [inner], za, zb - za);
   const out = [];
   if (g0 > z0 + 0.01) out.push(extrude(plain, [inner], z0, g0 - z0));
-  out.push(extrude(engravedCircle(R, p.engGrooves), [inner], g0, g1 - g0));
+  if (Math.abs(g1 - p.engZ1) > 0.01) {
+    // groove cut by a band boundary — full depth, it continues into the next band
+    out.push(band(p.engDepthEff, g0, g1));
+  } else {
+    // true top: full-depth body, then a 45° staircase that closes the ceiling
+    const D = p.engDepthEff;
+    const nSteps = Math.max(1, Math.ceil(D / 0.45));
+    const rampH = Math.min(nSteps * 0.45, g1 - g0);
+    const bodyTop = g1 - rampH, stepH = rampH / nSteps;
+    if (bodyTop > g0 + 0.01) out.push(band(D, g0, bodyTop));
+    for (let s = 1; s <= nSteps; s++) {
+      const za = bodyTop + (s - 1) * stepH;
+      out.push(band(D * (nSteps - s) / nSteps, za, za + stepH));
+    }
+  }
   if (z1 > g1 + 0.01) out.push(extrude(plain, [inner], g1, z1 - g1));
   return out;
 }
