@@ -56,6 +56,41 @@ function circlePts(cx, cy, r) {
   return pts;
 }
 
+// Circle of radius R with a crisp rectangular notch cut inward at each groove
+// (used for engraved vertical lines on the cylinder wall — no CSG needed, the
+// recess is part of the extrude profile). Each groove = {a: center angle,
+// halfAng: half angular width, depth: radial depth}. Side walls are radial and
+// crisp because each groove edge gets two coincident-angle points (at R and at
+// R-depth); the groove floor is an arc at R-depth, the rest samples at R.
+function engravedCircle(R, grooves) {
+  const seg = 96;
+  const twoPi = 2 * Math.PI;
+  const norm = a => ((a % twoPi) + twoPi) % twoPi;
+  // event list: (angle, radius) vertices, sorted CCW. Base samples at R plus,
+  // per groove, the four corner points forming the two radial walls.
+  const verts = [];
+  for (let i = 0; i < seg; i++) verts.push({ a: norm(i / seg * twoPi), r: R });
+  for (const g of grooves) {
+    const a0 = norm(g.a - g.halfAng), a1 = norm(g.a + g.halfAng);
+    verts.push({ a: a0, r: R, k: 2 }, { a: a0, r: R - g.depth, k: 3 });
+    verts.push({ a: a1, r: R - g.depth, k: 1 }, { a: a1, r: R, k: 4 });
+    // sample the groove floor arc so wide grooves stay curved, not chorded
+    const steps = Math.max(1, Math.ceil((2 * g.halfAng) / (twoPi / seg)));
+    for (let i = 1; i < steps; i++) {
+      verts.push({ a: norm(g.a - g.halfAng + (2 * g.halfAng) * i / steps), r: R - g.depth, k: 3 });
+    }
+  }
+  // drop plain base points that fall inside any groove arc
+  const inside = a => grooves.some(g => {
+    let d = Math.abs(norm(a) - norm(g.a)); if (d > Math.PI) d = twoPi - d;
+    return d < g.halfAng - 1e-6;
+  });
+  const kept = verts.filter(v => v.k !== undefined || !inside(v.a));
+  // sort by angle; at equal angle order corner points so walls trace correctly
+  kept.sort((p, q) => (p.a - q.a) || ((p.k || 0) - (q.k || 0)));
+  return kept.map(v => new THREE.Vector2(v.r * Math.cos(v.a), v.r * Math.sin(v.a)));
+}
+
 function rectPts(x0, y0, x1, y1) {
   return [
     new THREE.Vector2(x0, y0), new THREE.Vector2(x1, y0),
@@ -240,6 +275,26 @@ function readParams() {
   p.slideGz0 = p.slideGz1 - (p.lidT + 0.3);
   // hinged style
   p.hingeL = Math.max(Math.min(p.spanX - 2 * (p.shape === 'cyl' ? 0 : p.cradius) - 6, 50), 16);
+  // body engraving (cylinder only): N evenly-spaced vertical grooves cut into
+  // the outer wall between engZ0 and engZ1. Thread style limits the top to the
+  // full-diameter body (below the neck transition).
+  p.engrave = p.shape === 'cyl' && $('engrave').checked;
+  p.engCount = Math.round(+$('engCount').value);
+  p.engWidth = +$('engWidth').value;
+  p.engDepth = +$('engDepth').value;
+  p.engLength = +$('engLength').value;
+  p.engBottom = +$('engBottom').value;
+  const engTop = p.style === 'thread' ? p.zTrans : p.height;
+  p.engZ0 = Math.max(p.floor + p.engBottom, p.floor + 0.5);
+  p.engZ1 = Math.min(p.engZ0 + p.engLength, engTop - 0.5);
+  const engR = p.diameter / 2;
+  p.engDepthEff = Math.min(p.engDepth, p.wall - 0.8);
+  p.engHalfAng = Math.min((p.engWidth / 2) / engR, Math.PI / p.engCount - 0.03);
+  p.engActive = p.engrave && p.engCount >= 1 && p.engWidth > 0 && p.engDepthEff > 0.05
+    && p.engHalfAng > 0.005 && p.engZ1 > p.engZ0 + 0.5;
+  p.engGrooves = p.engActive
+    ? [...Array(p.engCount)].map((_, i) => ({ a: i * 2 * Math.PI / p.engCount, halfAng: p.engHalfAng, depth: p.engDepthEff }))
+    : [];
   return p;
 }
 
@@ -480,6 +535,24 @@ function wallBandWithCuts(p, outerPts, innerPts, innerOff, z0, z1) {
   return out;
 }
 
+// Cylinder wall segment (inner radius innerR, from z0 to z1), split into up to
+// three z-bands so the engraved vertical grooves appear only over [engZ0,engZ1]:
+// plain circle below, engraved outer circle across the groove band, plain above.
+function cylWallBands(p, innerR, z0, z1) {
+  const R = p.diameter / 2;
+  const inner = circlePts(0, 0, innerR);
+  const plain = circlePts(0, 0, R);
+  const g0 = Math.max(p.engZ0, z0), g1 = Math.min(p.engZ1, z1);
+  if (!p.engActive || g1 <= g0 + 0.01) {
+    return [extrude(plain, [inner], z0, z1 - z0)];
+  }
+  const out = [];
+  if (g0 > z0 + 0.01) out.push(extrude(plain, [inner], z0, g0 - z0));
+  out.push(extrude(engravedCircle(R, p.engGrooves), [inner], g0, g1 - g0));
+  if (z1 > g1 + 0.01) out.push(extrude(plain, [inner], g1, z1 - g1));
+  return out;
+}
+
 function validate(p) {
   const warns = [];
   if (p.height <= p.floor + 4) warns.push('Box height must exceed floor thickness by at least 4 mm.');
@@ -565,6 +638,19 @@ function validate(p) {
     }
     if (p.zTrans - p.floor < 5) warns.push('Box too short for the neck + shoulder — most of the height is taken by the thread.');
   }
+  if (p.engrave) {
+    if (p.engDepth > p.wall - 0.8 + 0.001) {
+      warns.push(`Engraving depth clamped to ${(p.wall - 0.8).toFixed(1)} mm to keep ≥ 0.8 mm of wall behind the groove.`);
+    }
+    if ((p.engWidth / 2) / (p.diameter / 2) > Math.PI / p.engCount - 0.03 + 0.001) {
+      warns.push('Engraved lines are too wide for their count — width was clamped so the grooves don’t merge.');
+    }
+    const engTop = p.style === 'thread' ? p.zTrans : p.height;
+    if (p.engZ0 + p.engLength > engTop - 0.5 + 0.001) {
+      warns.push(`Engraving length clamped to ${(p.engZ1 - p.engZ0).toFixed(1)} mm to stay on the ${p.style === 'thread' ? 'body below the neck' : 'wall'}.`);
+    }
+    if (!p.engActive) warns.push('Engraving is inactive — check depth, width, length and bottom offset.');
+  }
   return warns;
 }
 
@@ -612,7 +698,8 @@ function buildBox(p) {
   geoms.push(extrude(outer, [], 0, p.floor)); // floor
 
   if (p.style === 'screw' || p.style === 'hinged') {
-    geoms.push(...wallBandWithCuts(p, outer, inner, p.wall, p.floor, p.height));
+    if (p.shape === 'cyl') geoms.push(...cylWallBands(p, p.diameter / 2 - p.wall, p.floor, p.height));
+    else geoms.push(...wallBandWithCuts(p, outer, inner, p.wall, p.floor, p.height));
   }
 
   if (p.cutsActive) geoms.push(...buildPlateRails(p));
@@ -657,9 +744,16 @@ function buildBox(p) {
     // wall in 3 bands: normal / groove (inner opening enlarged) / normal
     const gz1 = p.height - SNAP.grooveTop, gz0 = p.height - SNAP.grooveBot;
     const innerG = ring(p, p.wall - SNAP.grooveD);
-    geoms.push(...wallBandWithCuts(p, outer, inner, p.wall, p.floor, gz0));
-    geoms.push(...wallBandWithCuts(p, outer, innerG, p.wall - SNAP.grooveD, gz0, gz1));
-    geoms.push(...wallBandWithCuts(p, outer, inner, p.wall, gz1, p.height));
+    if (p.shape === 'cyl') {
+      const R = p.diameter / 2;
+      geoms.push(...cylWallBands(p, R - p.wall, p.floor, gz0));
+      geoms.push(...cylWallBands(p, R - (p.wall - SNAP.grooveD), gz0, gz1));
+      geoms.push(...cylWallBands(p, R - p.wall, gz1, p.height));
+    } else {
+      geoms.push(...wallBandWithCuts(p, outer, inner, p.wall, p.floor, gz0));
+      geoms.push(...wallBandWithCuts(p, outer, innerG, p.wall - SNAP.grooveD, gz0, gz1));
+      geoms.push(...wallBandWithCuts(p, outer, inner, p.wall, gz1, p.height));
+    }
   }
 
   if (p.style === 'slide') {
@@ -680,7 +774,7 @@ function buildBox(p) {
     // thread so the cap closes flush with the body. The inner bore narrows to
     // the neck through a 45° staircase (each step ≤ 0.45 mm — support-free).
     const R = p.diameter / 2, Rn = p.neckR;
-    geoms.push(extrude(outer, [inner], p.floor, p.zTrans - p.floor)); // full body wall
+    geoms.push(...cylWallBands(p, R - p.wall, p.floor, p.zTrans)); // full body wall (with engraving)
     for (let k = 1; k <= p.transSteps; k++) {
       const rIn = (R - p.wall) - p.transIn * k / p.transSteps;
       geoms.push(extrude(outer, [circlePts(0, 0, rIn)], p.zTrans + (k - 1) * 0.45, 0.45));
@@ -906,6 +1000,10 @@ function styleInfo(p) {
       `plate <b>${(2 * d.pw).toFixed(1)} × ${d.ph.toFixed(1)} × ${p.plateT} mm</b><br>`;
   }
 
+  if (p.engActive) {
+    html += `Engraving: <b>${p.engCount} lines</b>, <b>${p.engWidth.toFixed(1)} × ${p.engDepthEff.toFixed(1)} mm</b>, length <b>${(p.engZ1 - p.engZ0).toFixed(0)} mm</b><br>`;
+  }
+
   if (p.style === 'screw') {
     const ins = INSERTS[p.insert];
     const grip = p.lidT - p.cbDepth;
@@ -966,6 +1064,8 @@ function rebuild() {
     $('dims' + name).style.display = $('cut' + name).checked ? '' : 'none';
     $('holesCfg' + name).style.display = $('style' + name).value === 'holes' ? '' : 'none';
   }
+  $('engraveSection').style.display = isCyl ? '' : 'none';
+  $('engraveDims').style.display = $('engrave').checked ? '' : 'none';
 
   clearGroup(boxGroup);
   clearGroup(lidGroup);
@@ -1021,6 +1121,7 @@ for (const name of ['North', 'East', 'South', 'West']) {
 }
 for (const id of ['diameter', 'sizeX', 'sizeY', 'height', 'wall', 'floor', 'cradius', 'lidT', 'fitClr',
   'counterbore', 'holeD', 'holeDepth', 'clearD', 'headD', 'bossWall', 'threadPitch', 'threadTurns',
+  'engrave', 'engCount', 'engWidth', 'engDepth', 'engLength', 'engBottom',
   ...plateIds]) {
   $(id).addEventListener('input', rebuild);
 }
