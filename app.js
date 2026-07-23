@@ -103,6 +103,70 @@ function rectPts(x0, y0, x1, y1) {
   ];
 }
 
+// Inward perimeter offset of a quarter-round edge fillet of radius fr, at
+// distance h from the filleted face (h in [0, fr]): 0 at the face edge → fr at
+// depth fr... note: here we return the INSET (how far in from full width) as a
+// function of h measured from the FULL-width plane. See filletBand for use.
+function filletInset(fr, h) {
+  const g = fr - h;
+  return fr - Math.sqrt(Math.max(fr * fr - g * g, 0));
+}
+
+// Smooth quarter-round fillet band as a closed BufferGeometry (no stepping).
+// A closed cross-section profile — inner wall (offset fr) up, radial top cap to
+// full width, and the quarter-round outer surface back down to the face — is
+// swept around the closed perimeter ring(p, off). Closed profile × closed path =
+// watertight torus (no caps/seams). dir +1 fillets the bottom edge (band above
+// faceZ); dir -1 the top edge. The inner wall at offset fr meets a core inset fr.
+function filletBand(p, fr, faceZ, dir) {
+  const segs = Math.max(8, Math.ceil(fr / 0.2));
+  // cross-section boundary as (offset from full width, height above face)
+  const prof = [[fr, 0], [fr, fr], [0, fr]];
+  for (let s = segs - 1; s >= 1; s--) {
+    const h = fr * s / segs;
+    prof.push([filletInset(fr, h), h]);   // quarter-round outer, top→face
+  }
+  const K = prof.length;
+  const rings = prof.map(([off]) => ring(p, off));   // perimeter loop per profile pt
+  const m = rings[0].length;
+  const pos = [];
+  const V = (k, i) => { const v = rings[k][i]; return [v.x, v.y, faceZ + dir * prof[k][1]]; };
+  const tri = (A, B, C) => pos.push(A[0], A[1], A[2], B[0], B[1], B[2], C[0], C[1], C[2]);
+  for (let k = 0; k < K; k++) {
+    const kp = (k + 1) % K;
+    for (let i = 0; i < m; i++) {
+      const ip = (i + 1) % m;
+      // wind so normals face outward (verified by enclosed-volume sign)
+      if (dir > 0) { tri(V(k, i), V(kp, ip), V(k, ip)); tri(V(k, i), V(kp, i), V(kp, ip)); }
+      else { tri(V(k, i), V(k, ip), V(kp, ip)); tri(V(k, i), V(kp, ip), V(kp, i)); }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+// A filleted slab z=0..H with the outer edge rounded on one side: a core inset by
+// fr (carrying any holes), a hole-less straight outer rim, and the smooth
+// filletBand. edge 'bottom' rounds the z=0 edge, 'top' rounds the z=H edge.
+function filletedSlab(p, fr, H, holesAt, boundaries, edge) {
+  const out = [];
+  const zs = [0, ...boundaries.filter(z => z > 0.01 && z < H - 0.01).sort((a, b) => a - b), H];
+  for (let i = 0; i + 1 < zs.length; i++) {
+    const za = zs[i], zb = zs[i + 1];
+    out.push(extrude(ring(p, fr), holesAt((za + zb) / 2), za, zb - za));  // core (inset fr)
+  }
+  if (edge === 'bottom') {
+    if (H > fr + 0.01) out.push(extrude(ring(p, 0), [ring(p, fr)], fr, H - fr)); // rim above
+    out.push(filletBand(p, fr, 0, +1));
+  } else {
+    if (H > fr + 0.01) out.push(extrude(ring(p, 0), [ring(p, fr)], 0, H - fr)); // rim below
+    out.push(filletBand(p, fr, H, -1));
+  }
+  return out;
+}
+
 // U-shaped rail ring (open at front, y = -sy/2) for the slide-lid grooves.
 // r must not exceed railW or the inner edge would cut the corner arcs.
 function uShapePts(sx, sy, railW, r) {
@@ -309,6 +373,12 @@ function readParams() {
     const k = engLen / (p.engRoundTop + p.engRoundBot);
     p.engRoundTop *= k; p.engRoundBot *= k;
   }
+  // edge fillets: round-over on the lid top edge and the body bottom edge.
+  const fmax = Math.min(p.spanX, p.spanY) / 2 - p.wall - 1;   // never exceed the part
+  p.filletTopReq = +$('filletTop').value;
+  p.filletBotReq = +$('filletBot').value;
+  p.filletTop = Math.max(0, Math.min(p.filletTopReq, p.lidT - 0.8, fmax));
+  p.filletBot = Math.max(0, Math.min(p.filletBotReq, p.floor, fmax));  // stays in the solid floor
   return p;
 }
 
@@ -693,6 +763,21 @@ function validate(p) {
     }
     if (!p.engActive) warns.push('Engraving is inactive — check depth, width, length and bottom offset.');
   }
+  if (p.filletBotReq > p.filletBot + 0.01) {
+    warns.push(`Bottom fillet clamped to ${p.filletBot.toFixed(1)} mm (floor thickness) — increase floor for a larger radius.`);
+  }
+  if (p.filletTopReq > p.filletTop + 0.01) {
+    warns.push(`Lid top fillet clamped to ${p.filletTop.toFixed(1)} mm by the lid thickness / box size.`);
+  }
+  if (p.filletTopReq > 0.1 && p.style === 'slide') {
+    warns.push('Lid top fillet is ignored for the slide lid (its lid is a thin tongue, not a full plate).');
+  }
+  if (p.filletTop > 0.1 && (p.style === 'snap' || p.style === 'hinged' || p.style === 'thread')) {
+    warns.push('Lid prints top-face-down, so its top fillet becomes a rounded bottom edge on the bed (still fine, no supports).');
+  }
+  if (p.filletBot > 0.1) {
+    warns.push('Body bottom fillet overhangs the first layers slightly — small radii print cleanly; add a brim if a large one lifts.');
+  }
   return warns;
 }
 
@@ -737,7 +822,10 @@ function buildBox(p) {
   const outer = ring(p, 0);
   const inner = ring(p, p.wall);
 
-  geoms.push(extrude(outer, [], 0, p.floor)); // floor
+  // floor — optionally with a smooth filleted bottom outer edge (fb ≤ floor, so
+  // it stays inside the solid floor disc).
+  if (p.filletBot > 0.1) geoms.push(...filletedSlab(p, p.filletBot, p.floor, () => [], [], 'bottom'));
+  else geoms.push(extrude(outer, [], 0, p.floor)); // floor
 
   if (p.style === 'screw' || p.style === 'hinged') {
     if (p.shape === 'cyl') geoms.push(...cylWallBands(p, p.diameter / 2 - p.wall, p.floor, p.height));
@@ -830,6 +918,20 @@ function buildBox(p) {
   return geoms;
 }
 
+// Lid plate from z=0..lidT with the top outer edge smoothly filleted by
+// p.filletTop. holesAt(z) returns the hole polygons at height z (lets the screw
+// counterbore vary); boundaries lists z where holesAt changes.
+function filletedPlate(p, holesAt, lidT, boundaries = []) {
+  if (p.filletTop > 0.1) return filletedSlab(p, p.filletTop, lidT, holesAt, boundaries, 'top');
+  const out = [];
+  const zs = [0, ...boundaries.filter(z => z > 0.01 && z < lidT - 0.01).sort((a, b) => a - b), lidT];
+  for (let i = 0; i + 1 < zs.length; i++) {
+    const za = zs[i], zb = zs[i + 1];
+    out.push(extrude(ring(p, 0), holesAt((za + zb) / 2), za, zb - za));
+  }
+  return out;
+}
+
 function buildLid(p) {
   const geoms = [];
   const ix = p.spanX - 2 * p.wall, iy = p.spanY - 2 * p.wall;
@@ -843,16 +945,16 @@ function buildLid(p) {
     const cbDepth = p.counterbore ? Math.max(Math.min(p.headH + 0.4, p.lidT - 1.2), 0) : 0;
     if (cbDepth > 0.3) {
       const cbHoles = centers.map(([x, y]) => circlePts(x, y, p.headD / 2));
-      geoms.push(extrude(outer, clearHoles, 0, p.lidT - cbDepth));
-      geoms.push(extrude(outer, cbHoles, p.lidT - cbDepth, cbDepth));
+      const cbBoundary = p.lidT - cbDepth;
+      geoms.push(...filletedPlate(p, z => z > cbBoundary ? cbHoles : clearHoles, p.lidT, [cbBoundary]));
     } else {
-      geoms.push(extrude(outer, clearHoles, 0, p.lidT));
+      geoms.push(...filletedPlate(p, () => clearHoles, p.lidT));
     }
     p.cbDepth = cbDepth;
   }
 
   if (p.style === 'hinged') {
-    geoms.push(extrude(outer, [], 0, p.lidT)); // plate
+    geoms.push(...filletedPlate(p, () => [], p.lidT)); // plate
     // center knuckle around the pin axis (on the lid's underside plane) plus
     // a chamfered arm; the chamfer keeps every arm point within the knuckle's
     // swing radius so the lid opens without hitting the box gussets
@@ -870,7 +972,7 @@ function buildLid(p) {
   }
 
   if (p.style === 'snap') {
-    geoms.push(extrude(outer, [], 0, p.lidT)); // plate
+    geoms.push(...filletedPlate(p, () => [], p.lidT)); // plate
     // skirt ring with a snap ridge that runs the full perimeter into the groove
     const skirtOuter = ring(p, p.wall + c);
     const skirtInner = ring(p, p.wall + c + SNAP.skirtT);
@@ -909,7 +1011,7 @@ function buildLid(p) {
     const R = p.diameter / 2, Rn = p.neckR;
     const valley = Rn + p.td + p.threadClr;  // = R - wall
     const skirtH = p.neckH - 0.3;            // stops just above the shoulder
-    geoms.push(extrude(circlePts(0, 0, R), [], 0, p.lidT));
+    geoms.push(...filletedPlate(p, () => [], p.lidT));   // cap top (= circle R)
     geoms.push(extrude(circlePts(0, 0, R), [circlePts(0, 0, valley)], -skirtH, skirtH));
     const z1 = -0.8 - p.threadW / 2;
     const z0 = z1 - p.threadLen;
@@ -1045,6 +1147,8 @@ function styleInfo(p) {
   if (p.engActive) {
     html += `Engraving: <b>${p.engCount} lines</b>, <b>${p.engWidth.toFixed(1)} × ${p.engDepthEff.toFixed(1)} mm</b>, length <b>${(p.engZ1 - p.engZ0).toFixed(0)} mm</b><br>`;
   }
+  if (p.filletTop > 0.1 && p.style !== 'slide') html += `Lid top fillet: <b>${p.filletTop.toFixed(1)} mm</b><br>`;
+  if (p.filletBot > 0.1) html += `Body bottom fillet: <b>${p.filletBot.toFixed(1)} mm</b><br>`;
 
   if (p.style === 'screw') {
     const ins = INSERTS[p.insert];
@@ -1164,6 +1268,7 @@ for (const name of ['North', 'East', 'South', 'West']) {
 for (const id of ['diameter', 'sizeX', 'sizeY', 'height', 'wall', 'floor', 'cradius', 'lidT', 'fitClr',
   'counterbore', 'holeD', 'holeDepth', 'clearD', 'headD', 'bossWall', 'threadPitch', 'threadTurns',
   'engrave', 'engCount', 'engWidth', 'engDepth', 'engLength', 'engBottom',
+  'filletTop', 'filletBot',
   ...plateIds]) {
   $(id).addEventListener('input', rebuild);
 }
