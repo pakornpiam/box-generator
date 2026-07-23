@@ -99,6 +99,31 @@ must happen independently in the builder functions; don't rely on
 `toNonIndexed()` as needed) and writes a standard 84-byte-header binary STL
 buffer directly — no external STL library.
 
+## Deployment
+
+Live at **https://box-generator-3pl.pkroaming.com** (custom domain) and
+**https://box-generator-3pl.pages.dev**, hosted on Cloudflare Pages (account
+`Pakornpiam@gmail.com`, project `box-generator`).
+
+Auto-deploy runs through **GitHub Actions**, not Cloudflare's native git
+integration: [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
+triggers on every push to `main` (plus manual `workflow_dispatch`), stages the
+three static files into `dist/`, and runs `wrangler pages deploy`. So **pushing
+to `main` publishes the site** — no build step, no manual deploy.
+
+- The Cloudflare Pages project is **direct-upload** type (the Actions workflow
+  uploads to it). It is deliberately not git-connected: a direct-upload project
+  can't be converted, creating a git-connected project via API doesn't wire the
+  push-event trigger, and the dashboard Connect-to-Git flow was unreliable here.
+  If you ever migrate to native integration, it must be done via the Cloudflare
+  dashboard, and the custom domain re-attached afterward.
+- Required repo secrets (Settings → Secrets → Actions): `CLOUDFLARE_API_TOKEN`
+  (scoped **Account · Cloudflare Pages · Edit**) and `CLOUDFLARE_ACCOUNT_ID`.
+- The custom domain routes via a proxied CNAME `box-generator` →
+  `box-generator-3pl.pages.dev` in the `pkroaming.com` Cloudflare zone.
+- Cloudflare edge-caches the HTML, so after a deploy the production URL can lag
+  briefly; append a `?cb=<random>` query to bypass it when verifying.
+
 ## Git Rules (Important — Follow every time)
 
 - Do not work directly on the `master` branch; always create a new branch.
