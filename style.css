@@ -3,11 +3,62 @@
 body {
   margin: 0;
   display: flex;
+  flex-direction: column;
   height: 100vh;
   font-family: "Segoe UI", system-ui, sans-serif;
   background: #14171c;
   color: #dde3ea;
   overflow: hidden;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  padding: 8px 16px;
+  background: #1b1f26;
+  border-bottom: 1px solid #2c323c;
+}
+
+#topbar .brand {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.topbar-links {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.topbar-links a {
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: #cdd5df;
+  border: 1px solid #3a4250;
+  white-space: nowrap;
+}
+
+.topbar-links a:hover { background: #21262f; color: #fff; }
+
+.topbar-links a.donate {
+  background: #e0466e;
+  border-color: #e0466e;
+  color: #fff;
+}
+
+.topbar-links a.donate:hover { background: #f05a80; border-color: #f05a80; }
+
+#main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 #sidebar {
