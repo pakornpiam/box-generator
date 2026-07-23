@@ -172,6 +172,13 @@
     </details>
   </div>
 
+  <div class="section">
+    <h2>Edge Fillets</h2>
+    <label>Lid top fillet (mm) <input type="number" id="filletTop" value="0" min="0" max="12" step="0.5"></label>
+    <label>Body bottom fillet (mm) <input type="number" id="filletBot" value="0" min="0" max="8" step="0.5"></label>
+    <p class="hint">Rounds the lid's top outer edge and the body's bottom outer edge. 0 = off. Bottom fillet is limited to the floor thickness; increase floor for a larger radius.</p>
+  </div>
+
   <div class="section" id="engraveSection">
     <h2>Body Engraving</h2>
     <label class="check"><input type="checkbox" id="engrave"> Engraved vertical lines</label>
@@ -202,6 +209,6 @@
 </div>
 <div id="viewport"></div>
 </div>
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=12"></script>
 </body>
 </html>
