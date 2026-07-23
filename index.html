@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Box Generator — Heat-Set Insert Box + Lid</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 <script type="importmap">
 {
   "imports": {
@@ -15,8 +15,15 @@
 </script>
 </head>
 <body>
+<div id="topbar">
+  <span class="brand">📦 Box Generator</span>
+  <nav class="topbar-links">
+    <a href="https://pkmakes.pkroaming.com" target="_blank" rel="noopener">🔧 Visit PK Makes</a>
+    <a class="donate" href="https://buy.stripe.com/4gMaEZds0g8t9ek8fy5ZC00" target="_blank" rel="noopener">❤ Donate</a>
+  </nav>
+</div>
+<div id="main">
 <div id="sidebar">
-  <h1>📦 Box Generator</h1>
   <p class="subtitle">Rectangular or cylindrical box + lid (screw / hinged / snap / slide). Adjustable size. STL export for Bambu Lab.</p>
 
   <div class="section">
@@ -181,6 +188,7 @@
   <p class="hint">Import both STLs into Bambu Studio — they're already flat on the bed and print without supports. Press inserts in with a soldering iron at ~230 °C.</p>
 </div>
 <div id="viewport"></div>
+</div>
 <script type="module" src="app.js?v=8"></script>
 </body>
 </html>
