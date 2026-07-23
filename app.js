@@ -56,39 +56,44 @@ function circlePts(cx, cy, r) {
   return pts;
 }
 
-// Circle of radius R with a crisp rectangular notch cut inward at each groove
-// (used for engraved vertical lines on the cylinder wall — no CSG needed, the
+// Circle of radius R with a smooth rounded (half-round) valley cut inward at each
+// groove — used for engraved vertical lines on the cylinder wall (no CSG; the
 // recess is part of the extrude profile). Each groove = {a: center angle,
-// halfAng: half angular width, depth: radial depth}. Side walls are radial and
-// crisp because each groove edge gets two coincident-angle points (at R and at
-// R-depth); the groove floor is an arc at R-depth, the rest samples at R.
+// halfAng: half angular width, depth: radial depth}. The radius follows a
+// raised-cosine valley: full depth at the center, tangent to the surface at both
+// edges, so the flute has no sharp corners.
 function engravedCircle(R, grooves) {
-  const seg = 96;
+  const seg = 128;
   const twoPi = 2 * Math.PI;
   const norm = a => ((a % twoPi) + twoPi) % twoPi;
-  // event list: (angle, radius) vertices, sorted CCW. Base samples at R plus,
-  // per groove, the four corner points forming the two radial walls.
-  const verts = [];
-  for (let i = 0; i < seg; i++) verts.push({ a: norm(i / seg * twoPi), r: R });
-  for (const g of grooves) {
-    const a0 = norm(g.a - g.halfAng), a1 = norm(g.a + g.halfAng);
-    verts.push({ a: a0, r: R, k: 2 }, { a: a0, r: R - g.depth, k: 3 });
-    verts.push({ a: a1, r: R - g.depth, k: 1 }, { a: a1, r: R, k: 4 });
-    // sample the groove floor arc so wide grooves stay curved, not chorded
-    const steps = Math.max(1, Math.ceil((2 * g.halfAng) / (twoPi / seg)));
-    for (let i = 1; i < steps; i++) {
-      verts.push({ a: norm(g.a - g.halfAng + (2 * g.halfAng) * i / steps), r: R - g.depth, k: 3 });
+  const radiusAt = ang => {
+    let r = R;
+    for (const g of grooves) {
+      let d = ang - g.a;
+      d = Math.atan2(Math.sin(d), Math.cos(d));       // signed shortest diff
+      if (Math.abs(d) < g.halfAng) {
+        const t = d / g.halfAng;                      // -1..1 across the groove
+        r = Math.min(r, R - g.depth * 0.5 * (1 + Math.cos(Math.PI * t)));
+      }
     }
+    return r;
+  };
+  const angles = [];
+  for (let i = 0; i < seg; i++) angles.push(norm(i / seg * twoPi));
+  for (const g of grooves) {                          // denser sampling inside grooves
+    const sub = Math.max(12, Math.ceil((2 * g.halfAng) / (twoPi / seg)) + 6);
+    for (let i = 0; i <= sub; i++) angles.push(norm(g.a - g.halfAng + (2 * g.halfAng) * i / sub));
   }
-  // drop plain base points that fall inside any groove arc
-  const inside = a => grooves.some(g => {
-    let d = Math.abs(norm(a) - norm(g.a)); if (d > Math.PI) d = twoPi - d;
-    return d < g.halfAng - 1e-6;
-  });
-  const kept = verts.filter(v => v.k !== undefined || !inside(v.a));
-  // sort by angle; at equal angle order corner points so walls trace correctly
-  kept.sort((p, q) => (p.a - q.a) || ((p.k || 0) - (q.k || 0)));
-  return kept.map(v => new THREE.Vector2(v.r * Math.cos(v.a), v.r * Math.sin(v.a)));
+  angles.sort((a, b) => a - b);
+  const pts = [];
+  let prev = -1;
+  for (const a of angles) {
+    if (a - prev < 1e-6) continue;
+    prev = a;
+    const r = radiusAt(a);
+    pts.push(new THREE.Vector2(r * Math.cos(a), r * Math.sin(a)));
+  }
+  return pts;
 }
 
 function rectPts(x0, y0, x1, y1) {
@@ -295,6 +300,15 @@ function readParams() {
   p.engGrooves = p.engActive
     ? [...Array(p.engCount)].map((_, i) => ({ a: i * 2 * Math.PI / p.engCount, halfAng: p.engHalfAng, depth: p.engDepthEff }))
     : [];
+  // rounded ends: depth eases 0→D→0 over these heights. Top = 1.6·depth keeps the
+  // raised-cosine ceiling slope ≤ 45° (support-free); bottom matches for symmetry.
+  p.engRoundTop = 1.6 * p.engDepthEff;
+  p.engRoundBot = 1.6 * p.engDepthEff;
+  const engLen = p.engZ1 - p.engZ0;
+  if (p.engRoundTop + p.engRoundBot > engLen) {
+    const k = engLen / (p.engRoundTop + p.engRoundBot);
+    p.engRoundTop *= k; p.engRoundBot *= k;
+  }
   return p;
 }
 
@@ -535,11 +549,23 @@ function wallBandWithCuts(p, outerPts, innerPts, innerOff, z0, z1) {
   return out;
 }
 
-// Cylinder wall segment (inner radius innerR, from z0 to z1), split into up to
-// three z-bands so the engraved vertical grooves appear only over [engZ0,engZ1]:
-// plain circle below, engraved outer circle across the groove band, plain above.
-// The groove's true top (g1 ≈ engZ1) is closed with a 45° support-free staircase
-// so the box prints without supports (same trick as the thread inner shoulder).
+// Engraving depth at height z: a raised-cosine envelope over [engZ0, engZ1] —
+// 0 at each end, easing to the full depth over engRoundBot/engRoundTop, flat in
+// the middle. Gives the line rounded, tapered ends; the top rise is ≤45° so it
+// prints support-free.
+function engDepthAtZ(p, z) {
+  const D = p.engDepthEff, z0 = p.engZ0, z1 = p.engZ1;
+  if (z <= z0 || z >= z1) return 0;
+  const rb = Math.min(p.engRoundBot, z1 - z0), rt = Math.min(p.engRoundTop, z1 - z0);
+  if (rb > 0 && z < z0 + rb) return D * 0.5 * (1 - Math.cos(Math.PI * (z - z0) / rb));
+  if (rt > 0 && z > z1 - rt) return D * 0.5 * (1 - Math.cos(Math.PI * (z1 - z) / rt));
+  return D;
+}
+
+// Cylinder wall segment (inner radius innerR, from z0 to z1). Where it overlaps
+// the engraved range [engZ0,engZ1], it is sliced at ~0.45 mm following the
+// rounded depth envelope (engDepthAtZ); equal-depth slices are coalesced so the
+// full-depth middle is one extrude and only the rounded ends are finely stepped.
 function cylWallBands(p, innerR, z0, z1) {
   const R = p.diameter / 2;
   const inner = circlePts(0, 0, innerR);
@@ -549,25 +575,22 @@ function cylWallBands(p, innerR, z0, z1) {
     return [extrude(plain, [inner], z0, z1 - z0)];
   }
   const band = (depth, za, zb) => extrude(
-    depth < 0.05 ? plain : engravedCircle(R, p.engGrooves.map(g => ({ ...g, depth }))),
+    depth < 0.03 ? plain : engravedCircle(R, p.engGrooves.map(g => ({ ...g, depth }))),
     [inner], za, zb - za);
   const out = [];
   if (g0 > z0 + 0.01) out.push(extrude(plain, [inner], z0, g0 - z0));
-  if (Math.abs(g1 - p.engZ1) > 0.01) {
-    // groove cut by a band boundary — full depth, it continues into the next band
-    out.push(band(p.engDepthEff, g0, g1));
-  } else {
-    // true top: full-depth body, then a 45° staircase that closes the ceiling
-    const D = p.engDepthEff;
-    const nSteps = Math.max(1, Math.ceil(D / 0.45));
-    const rampH = Math.min(nSteps * 0.45, g1 - g0);
-    const bodyTop = g1 - rampH, stepH = rampH / nSteps;
-    if (bodyTop > g0 + 0.01) out.push(band(D, g0, bodyTop));
-    for (let s = 1; s <= nSteps; s++) {
-      const za = bodyTop + (s - 1) * stepH;
-      out.push(band(D * (nSteps - s) / nSteps, za, za + stepH));
-    }
+  // build 0.45 mm slices, then merge consecutive slices of (near-)equal depth
+  const step = 0.45;
+  const merged = [];
+  for (let z = g0; z < g1 - 1e-6;) {
+    const zb = Math.min(z + step, g1);
+    const depth = engDepthAtZ(p, (z + zb) / 2);
+    const last = merged[merged.length - 1];
+    if (last && Math.abs(last.depth - depth) < 1e-6) last.zb = zb;
+    else merged.push({ za: z, zb, depth });
+    z = zb;
   }
+  for (const s of merged) out.push(band(s.depth, s.za, s.zb));
   if (z1 > g1 + 0.01) out.push(extrude(plain, [inner], g1, z1 - g1));
   return out;
 }
